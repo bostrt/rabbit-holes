@@ -1,0 +1,201 @@
+# Isleward on Raspi/ARM
+
+Isleward (game) currently isn't working on raspberry pi/ARM due to its dependency on Sqlite or RethinkDB. Sqlite would actually work but Isleward's dependency on it is only meant for development; RethinkDB is intended for production. RethinkDB says ARM support is still experimental (as of Feb 17, 2020). 
+
+## Possible solutions
+
+- Add support for something like AlaSQL (pure [?] JavaScript db).
+- Still use Sqlite (would require compiling the node.js bindings during `npm install`) even though its not intended for production.
+
+## Other notes
+### Docker
+The current `Dockerfile` will need to be re-worked to run on raspberry pi/ARM. Here's some scratch notes. This is *not* going to work, just keep some ideas saved:
+
+```
+# Base image on Node.js 10.x LTS (dubnium)
+FROM node:12-alpine as builder
+
+# Install build dependnecies
+RUN apk --no-cache add python3 make gcc libc-dev g++
+
+# Create app directory
+WORKDIR /usr/src/isleward
+
+# Bundle app source
+COPY . .
+
+# Change directory to src/server/
+WORKDIR /usr/src/isleward/src/server/
+
+RUN npm install
+
+#-----------------
+FROM node:12-alpine
+
+# Install build dependnecies
+RUN apk --no-cache add python3 make gcc libc-dev g++
+
+# Create app directory
+WORKDIR /usr/src/isleward/src/server
+
+# Copy in from builder
+COPY --from=builder /usr/src/isleward/src/server .
+
+# Expose container's port 4000
+EXPOSE 4000
+
+# Launch Isleward server
+CMD ["node", "index.js"]
+```
+
+The `Dockerfile` above took ages to compile on a Raspberry PI 3 (4GB model). By ages, I mean like a few minutes or something.
+
+### Kubernetes
+
+Here's an example set of templates to deploy Isleward and Rethink. This would probably work fine on x86, but it breaks on Raspberry PI/ARM unless you build the container images for ARM (!):
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: isleward
+
+---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    k8s-app: isleward
+  name: isleward
+  namespace: isleward
+
+---
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    k8s-app: isleward
+  name: rethink
+  namespace: isleward
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    k8s-app: isleward
+  name: rethink
+  namespace: isleward
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: admin
+    - port: 28015
+      targetPort: 28015
+      name: client
+  selector:
+    k8s-app: rethink
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    k8s-app: rethink
+  name: rethink
+  namespace: isleward
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      k8s-app: rethink
+  template:
+    metadata:
+      labels:
+        k8s-app: rethink
+    spec:
+      containers:
+        - name: rethink
+          image: docker.io/library/rethinkdb:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+            - containerPort: 28015
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              scheme: HTTP
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+      serviceAccountName: rethink
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    k8s-app: isleward
+  name: isleward
+  namespace: isleward
+spec:
+  ports:
+    - port: 4000
+      targetPort: 4000
+  selector:
+    k8s-app: isleward
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    k8s-app: isleward
+  name: isleward
+  namespace: isleward
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      k8s-app: isleward
+  template:
+    metadata:
+      labels:
+        k8s-app: isleward
+    spec:
+      containers:
+        - name: isleward
+          image: docker.io/bostrt/isleward:latest
+          imagePullPolicy: Always
+          env:
+            - name: IWB_DB
+              value: "rethink"
+            - name: IWB_DB_HOST
+              value: "rethink.isleward.svc"
+            - name: IWB_DB_PORT
+              value: "8080"
+            - name: IWB_DB_NAME
+              value: "live"
+          ports:
+            - containerPort: 4000
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              scheme: HTTP
+              path: /
+              port: 4000
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+      serviceAccountName: isleward
+```
