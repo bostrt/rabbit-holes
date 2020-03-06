@@ -1,0 +1,16 @@
+Source: quikey
+Maintainer: Robert Bost <bostrt@gmail.com
+Build-Depends: debhelper,dh-python,python3-all-dev,python3-setuptools,
+Section: devel
+Priority: optional
+Standards-Version: 3.9.6
+X-Python3-Version: >= 3.6
+
+Package: quikey
+Architecture: all
+Description: ...
+Depends: ${python3:Depends},python3-requests,python3-click,python3-daemon,python3-terminaltables,python3-humanize,python3-xdg,
+# MISSING python3-inotify_simple !!!
+# MISSING python3-tinydb !!!
+# MISSING python3-pynput
+
